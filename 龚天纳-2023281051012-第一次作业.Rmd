@@ -1,0 +1,263 @@
+---
+title: "龚天纳定量分析第一次作业"
+author:
+  - 龚天纳
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  word_document:
+    toc: yes
+  html_document:
+    code_folding: show
+    fig_caption: yes
+    fig_width: 10
+    highlight: tango
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+---
+```{r setup, include = FALSE,echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE,error = FALSE, warning = FALSE, message = FALSE,
+                      out.width = "100%", split = FALSE, fig.align = "center")
+#load library
+library(tidyverse)
+#library(kableExtra)
+library(lubridate)
+library(scales)
+library(plotly)
+library(patchwork)
+library(ggrepel)
+library(janitor)
+library(showtext)
+showtext_auto(enable = TRUE)
+# 转pdf
+# install.packages('tinytex') #转pdf的引擎
+# tinytex::install_tinytex()
+# rmarkdown::render("homework.Rmd")
+library(latexpdf)
+```
+
+# 数据介绍
+
+本报告**链家**数据获取方式如下：
+    
+报告人在2023年9月12日获取了[链家武汉二手房网站](https://wh.lianjia.com/ershoufang/)数据。
+    
+- 链家二手房网站默认显示100页，每页30套房产，因此本数据包括3000套房产信息；
+    
+- 数据包括了页面可见部分的文本信息，具体字段及说明见作业说明。
+
+ **说明：**数据仅用于教学；由于不清楚链家数据的展示规则，因此数据可能并不是武汉二手房市场的随机抽样，结论很可能有很大的偏差，甚至可能是错误的。
+
+|变量|解释|
+|:--|:--|
+|property_name|小区名字|
+|property_region|所处区域|
+|price_ttl|房屋总价，单位万元|
+|price_sqm|房屋单价，单位元|
+|bedrooms|房间数|
+|livingrooms|客厅数|
+|building_area|建筑面积|
+|directions1|房屋主要朝向|
+|directions2|房屋次要朝向|
+|decoration|装修状况|
+|property_t_height|楼栋总层数|
+|property_height|房屋在所在楼栋所处位置，取值为高中低|
+|property_style|建筑形式，如板楼、塔楼等|
+|followers|在该二手房网站的关注人数|
+|near_subway|是否靠近地铁|
+|if_2y|产证是否满2年|
+|has_key|中介是否有钥匙，标注“随时看房”表示有钥匙|
+|vr|是否支持VR看房|
+
+请利用你掌握的描述性统计方法，对数据进行探索性数据分析，可以讨论的问题包括（但不限于）：价格特点、区位特点、建筑形式、以及这些变量的组合分析等。
+
+要求：
+1. 使用Rmarkdown或者Quarto完成数据分析报告，并导出为pdf。需要在仓库里同时提交markdown文件和pdf文件。
+2. 提交截止日期10月20日12:00。
+
+# 数据准备
+```{r}
+# 载入数据和预处理
+lj<- read_csv("//Users/gtn/Desktop/R/R_study/quantify_analysis_fork/data/2023-09-12_cleaned.csv")
+
+# 检查列名是否规范，如有必要清洗列名
+names(lj)
+
+# 整体去重
+lj <- unique(lj)
+view(lj)
+```
+
+# 查看数据总体样貌
+```{r}
+skimr::skim(lj) 
+summary(lj)
+```
+# 数据清洗
+## 数据检查
+```{r}
+#查看每个列唯一值
+lj_column <- c(names(lj[c(2,8:18)])) #构建向量，查看lj第2列，8-18列的列名
+unique_value <- apply(lj[c(2,8:18)], 2, function(x) unique(x))
+for (i in 1:length(unique_value)) {
+  cat(lj_column[i],"的去重值为：","\n")
+  print(unique_value[[i]])
+  cat("\n")
+}
+```
+## 处理缺失值+转换因子
+```{r}
+lj$near_subway <- ifelse(lj$near_subway != "近地铁"    , NA, lj$near_subway) 
+lj$if_2y       <- ifelse(lj$if_2y       != "房本满两年", NA, lj$if_2y      ) 
+lj$has_key     <- ifelse(lj$has_key     != "随时看房"  , NA, lj$has_key    ) 
+lj$vr          <- ifelse(lj$vr          != "VR看装修"  , NA, lj$vr         ) 
+view(lj)
+```
+
+## 清洗脏数据
+```{r}
+# property_region 
+# 取脏数据的小区名
+name <- lj %>%
+  filter(grepl("VR看装修|^随时看", property_region, ignore.case = TRUE)) %>% 
+  distinct(property_name)
+name
+
+#替换为同名小区的正确区域
+clean <- lj %>%
+  filter(property_name %in% (unlist(name)) & !grepl("VR看装修|^随时看", property_region, ignore.case = TRUE)) %>% 
+  distinct(property_name,property_region)
+clean
+
+lj <- unique(lj %>% 
+  left_join(clean,by = "property_name" ) %>% 
+    # filter(property_name %in% (unlist(name))) %>% 
+  mutate(region = coalesce(property_region.y, property_region.x)) %>% 
+  select(-c(2)) )
+
+lj$region[lj$property_name == "金色雅园金沙苑"] <- "长港路"
+lj$region[lj$property_name == "中北春天"] <- "中北路"
+
+view(lj)
+```
+
+
+# 可以看到：
+
+- 直观结论1
+  武汉市二手房每平米均价1.5万元，过半房屋的单价在1.1-1.8万之间
+
+- 直观结论2
+  武汉市二手房2房和3房的户型居多，大部分房屋面积在85-120平之间
+  
+- 直观结论3
+  武汉市二手房中高楼层居多，过半房屋楼层在10-33层之间
+  
+```{r}
+skimr::skim(lj) 
+```
+
+# 探索性分析
+```{r}
+## 如下语句可以解决画图中的中文显示问题，当然你可以用showtext包来解决
+theme_set(theme(text = element_text(family="Songti SC",size = 10))) #这里family设置成你系统中的中文字体名。
+```
+
+## 房屋单价的数值描述与图形
+
+发现：
+
+- 发现1
+  房屋单价分布呈右偏，大部分房屋单价在3万以内
+```{r}
+# 绘制 price_sqm 列的直方图和概率密度曲线
+ggplot(lj, aes(x = price_sqm)) +
+  geom_histogram(aes(y = ..density..), binwidth = 100, fill = "lightblue", color = "grey") +
+  geom_density(alpha = 0.5, fill = "lightgreen") +
+  labs(title = "price_sqm直方图与概率密度曲线", x = "价格/平方米", y = "密度") +
+
+# 绘制 price_sqm 列的直方图
+ggplot(lj, aes(x = price_sqm)) +
+  geom_histogram(binwidth = 100) +
+  labs(title = "price_sqm直方图", x = "价格/平方米", y = "频数")
+```
+
+- 发现2
+  房屋单价与面积成正比，面积越大的房子，单价可能更高
+```{r}
+# 设置 building_area 的范围
+lower_bound <- quantile(lj$building_area, 0)  # 0th percentile
+upper_bound <- quantile(lj$building_area, 0.99)  # 99th percentile
+
+# 过滤掉 building_area 列中不在范围之间的数据
+lj_filtered <- lj[lj$building_area >= lower_bound & lj$building_area <= upper_bound, ]
+
+# 绘制 price_sqm 和 building_area 的散点图
+p1 <- ggplot(lj_filtered, aes(x = building_area, y = price_sqm)) +
+  geom_point() +
+  labs(title = "price_sqm 和 building_area 的关系 (去除极值)", x = "建筑面积", y = "价格/平方米") 
+
+# 添加拟合曲线
+p1 + geom_smooth(method = "lm", se = FALSE, color = "blue")
+
+```
+- 发现3
+  房屋单价与面积成正比，面积越大的房子，单价可能更高，175-200平以及225-250平的房子的单价比其他面积更贵
+```{r}
+# 创建区间列
+lj$building_area_interval <- cut(lj$building_area, breaks = seq(0, max(lj$building_area) + 25, by = 25))
+
+# 创建箱线图
+p2 <- ggplot(lj, aes(x = building_area_interval, y = price_sqm)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(title = "按建筑面积区间的价格/平方米箱线图", x = "建筑面积区间", y = "价格/平方米") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+print(p2)
+```
+
+
+## 房屋朝向的数值描述与图形
+
+发现：
+
+- 发现1 大约有82%的房子房屋朝向为南
+```{r}
+# 统计各个值的数量
+directions1_counts <- lj %>%
+  group_by(directions1) %>%
+  summarize(count = n(), proportion = n() / nrow(lj))
+
+# 创建直方图
+p3 <- ggplot(directions1_counts, aes(x = directions1, y = count)) +
+  geom_bar(stat = "identity", fill = "lightblue", color = "black") +
+  labs(title = "房屋朝向的数量分布直方图", x = "房屋朝向", y = "数量") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+print(p3)
+print(directions1_counts)
+```
+
+- 发现2 单价在3万以上的房子，房屋朝向为南和东南可能是个很好的卖点
+```{r}
+# 创建箱线图
+p4 <- ggplot(lj, aes(x = directions1, y = price_sqm)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(title = "directions1 列的价格/平方米箱线图", x = "房屋朝向向", y = "价格/平方米") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+print(p4)
+
+```
+
+# 发现总结
+
+武汉市二手房均价1.5万，过半房屋的单价在1.1-1.8万之间，房屋单价与面积成正比，面积越大的房子，单价可能更高。2房和3房的户型居多，大部分房屋面积在85-120平之间，房中高楼层居多，过半房屋楼层在10-33层之间，大约有82%的房子房屋朝向为南。
+
+
+
